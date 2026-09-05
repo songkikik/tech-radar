@@ -1,0 +1,18 @@
+# cp .envrc.local.example .envrc.local 후 값 채우기. .envrc.local 은 gitignore 된다.
+# dev 타깃(로컬)만 쓸 거면 아무것도 설정하지 않아도 동작한다.
+
+# --- 카탈로그 (prod/ci 타깃) : Neon Postgres ---
+# export TECHRADAR_CATALOG_DSN="postgres://user:pass@ep-xxx.ap-southeast-1.aws.neon.tech/techradar?sslmode=require"
+
+# --- 데이터 (prod/ci 타깃) : Cloudflare R2 ---
+# export TECHRADAR_DATA_PATH="s3://techradar/prod/"
+# export R2_ACCOUNT_ID=""
+# export R2_ACCESS_KEY_ID=""
+# export R2_SECRET_ACCESS_KEY=""
+
+# --- 서빙 ---
+# export SLACK_WEBHOOK_URL=""          # 개인 WS incoming webhook
+# export GROQ_API_KEY=""               # 무료 티어, 카드 불필요 (console.groq.com)
+
+# --- 수집 ---
+# export GITHUB_TOKEN=""               # GitHub Search API rate limit 상향(인증 시 30 req/min)

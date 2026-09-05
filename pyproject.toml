@@ -1,0 +1,31 @@
+[project]
+name = "tech-radar"
+version = "0.1.0"
+description = "최신 기술 트렌드 증분 수집 파이프라인 + Slack 데일리 다이제스트"
+readme = "README.md"
+# 3.12 핀: 3.13+ 에서 dbt-core 의존 mashumaro 가 UnserializableField 로 터진다.
+# (price-integrity 에서 동일 함정을 이미 밟음)
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # DuckLake 의 네이티브 MERGE 는 1.4.0+ 부터. 그 아래면 delete+insert 폴백만 가능.
+    "duckdb>=1.4.0",
+    # duckdb 파이썬 클라이언트가 TIMESTAMPTZ → datetime 변환에 요구한다.
+    # 워터마크를 파이썬으로 읽는 게 상시 동작이라 선택이 아니라 필수.
+    "pytz>=2024.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/techradar"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

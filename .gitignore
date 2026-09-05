@@ -1,0 +1,26 @@
+# 데이터는 절대 커밋하지 않는다 (레이크하우스는 R2/로컬 data/ 에만 존재)
+data/
+*.duckdb
+*.duckdb.wal
+*.ducklake
+*.ducklake.files/
+*.parquet
+
+# 시크릿
+.env
+.envrc.local
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+
+# 모델 캐시
+.cache/
