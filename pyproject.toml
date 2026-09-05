@@ -12,7 +12,11 @@ dependencies = [
     # duckdb 파이썬 클라이언트가 TIMESTAMPTZ → datetime 변환에 요구한다.
     # 워터마크를 파이썬으로 읽는 게 상시 동작이라 선택이 아니라 필수.
     "pytz>=2024.1",
+    "typer>=0.12.0",
 ]
+
+[project.scripts]
+techradar = "techradar.cli:app"
 
 [project.optional-dependencies]
 dev = [
