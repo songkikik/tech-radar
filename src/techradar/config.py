@@ -34,13 +34,17 @@ class Target:
 
 
 def _dev_target() -> Target:
+    """로컬 개발 타깃.
+
+    경로는 env 우선, 없으면 REPO_ROOT 기준 폴백. env 를 보는 이유는 dbt 가
+    파이썬 설정을 읽을 수 없어 profiles.yml 이 같은 값을 env_var 로 받기 때문이고,
+    폴백을 두는 이유는 direnv 없이 `uv run techradar` 만으로도 돌아야 하기 때문이다.
+    """
     root = REPO_ROOT / "data"
-    (root / "lakehouse").mkdir(parents=True, exist_ok=True)
-    return Target(
-        name="dev",
-        catalog_uri=f"ducklake:{root / 'catalog.ducklake'}",
-        data_path=f"{root / 'lakehouse'}/",
-    )
+    catalog = os.environ.get("TECHRADAR_DEV_CATALOG") or str(root / "catalog.ducklake")
+    data_path = os.environ.get("TECHRADAR_DEV_DATA_PATH") or f"{root / 'lakehouse'}/"
+    Path(data_path).mkdir(parents=True, exist_ok=True)
+    return Target(name="dev", catalog_uri=f"ducklake:{catalog}", data_path=data_path)
 
 
 def _remote_target(name: str) -> Target:

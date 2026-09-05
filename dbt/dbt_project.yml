@@ -1,0 +1,20 @@
+name: "techradar"
+version: "0.1.0"
+profile: "techradar"
+
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  # silver incremental 이 되돌아보는 폭. 이벤트 시각이 아니라 **수집 시각** 기준이다.
+  # at-least-once 로 재처리해도 merge 가 멱등이므로 넉넉히 잡는 편이 안전하다.
+  silver_lookback_days: 2
+
+models:
+  techradar:
+    +database: lake
+    silver:
+      +materialized: incremental

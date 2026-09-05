@@ -1,0 +1,48 @@
+version: 2
+
+models:
+  - name: silver__document
+    description: >
+      문서 1건 = 1행. bronze payload 를 정규화하고 published_at 을 1급 컬럼으로
+      승격해 recency 랭킹이 가능하게 만든다. grain = doc_id.
+      비즈니스 owner: 김기훈(개인 프로젝트).
+    columns:
+      - name: doc_id
+        description: "{source}:{native_id}. 전 파이프라인의 문서 식별자."
+        data_tests:
+          # 이 둘이 깨지면 merge 가 고장났다는 뜻이고, 그 상태로 다이제스트를
+          # 보내면 중복 추천이 나간다. 블로킹 테스트로 둔다.
+          - unique
+          - not_null
+
+      - name: source
+        description: "arxiv | hackernews | github"
+        data_tests:
+          - not_null
+          # dbt 1.12 부터 generic test 인자는 arguments: 아래로 들어간다.
+          - accepted_values:
+              arguments:
+                values: ["arxiv", "hackernews", "github"]
+
+      - name: title
+        data_tests:
+          - not_null
+
+      - name: published_at
+        description: >
+          발행 시각(UTC). 랭킹의 recency 축. meta JSON 에서 꺼내 승격한 값이라
+          NULL 이면 그 문서는 최신성 점수를 받을 수 없다.
+        data_tests:
+          - not_null
+
+      - name: content_hash
+        description: >
+          임베딩 대상 텍스트(title + body)의 해시. payload_hash 와 다르다 —
+          점수 같은 부가 필드만 바뀐 경우 재임베딩을 피하기 위함.
+        data_tests:
+          - not_null
+
+      - name: _source_fetched_at
+        description: 수집 시각. incremental 필터의 기준(이벤트 시각이 아님).
+        data_tests:
+          - not_null

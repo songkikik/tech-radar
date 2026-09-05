@@ -13,6 +13,8 @@ dependencies = [
     # 워터마크를 파이썬으로 읽는 게 상시 동작이라 선택이 아니라 필수.
     "pytz>=2024.1",
     "typer>=0.12.0",
+    # DuckLake 지원은 1.9.6+ (is_ducklake 프로필 플래그).
+    "dbt-duckdb>=1.9.6",
 ]
 
 [project.scripts]

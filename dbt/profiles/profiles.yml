@@ -1,0 +1,50 @@
+# 타깃 3개가 같은 SQL 을 돈다. 달라지는 건 ATTACH 한 줄뿐.
+#   dev  로컬 DuckDB 카탈로그 + 로컬 디렉토리   (외부 계정 불필요)
+#   ci   Neon 브랜치 카탈로그 + R2 ci 프리픽스
+#   prod Neon main 카탈로그  + R2 prod 프리픽스
+#
+# ⚠️ ci 는 카탈로그만 브랜치로 나누면 안 된다. Neon 브랜칭은 메타데이터만 분기하고
+#    R2 의 parquet 은 공유되므로, DATA_PATH 프리픽스도 반드시 따로 줘야 한다.
+techradar:
+  target: "{{ env_var('TECHRADAR_TARGET', 'dev') }}"
+  outputs:
+
+    dev:
+      type: duckdb
+      # 인메모리 DuckDB 에 DuckLake 를 붙인다. 실제 저장은 전부 attach 쪽.
+      path: ":memory:"
+      extensions:
+        - ducklake
+      attach:
+        - path: "ducklake:{{ env_var('TECHRADAR_DEV_CATALOG') }}"
+          alias: lake
+          options:
+            data_path: "{{ env_var('TECHRADAR_DEV_DATA_PATH') }}"
+      database: lake
+      schema: main
+      threads: 4
+
+    ci: &remote
+      type: duckdb
+      path: ":memory:"
+      extensions:
+        - ducklake
+        - httpfs
+      secrets:
+        - type: s3
+          key_id: "{{ env_var('R2_ACCESS_KEY_ID') }}"
+          secret: "{{ env_var('R2_SECRET_ACCESS_KEY') }}"
+          endpoint: "{{ env_var('R2_ACCOUNT_ID') }}.r2.cloudflarestorage.com"
+          region: auto
+          url_style: path
+      attach:
+        - path: "ducklake:postgres:{{ env_var('TECHRADAR_CATALOG_DSN') }}"
+          alias: lake
+          options:
+            data_path: "{{ env_var('TECHRADAR_DATA_PATH') }}"
+      database: lake
+      schema: main
+      threads: 4
+
+    prod:
+      <<: *remote
