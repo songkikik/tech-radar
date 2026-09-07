@@ -93,6 +93,26 @@ def status_cmd(
     """).fetchall():
         typer.echo(f"  {src:<20} {n}건  event_ts {lo} ~ {hi}")
 
+    # late arrival 관측: 그 실행 시점의 커서보다 과거인데 처음 들어온 행.
+    # 소급 조회(OVERLAP)가 실제로 뭘 건지고 있는지를 보여준다. 0건이면 OVERLAP 을
+    # 줄여도 되고, p99 가 OVERLAP 에 근접하면 늘려야 한다.
+    typer.echo("\n── late arrival (소급 조회가 건진 항목) ──")
+    late = con.execute("""
+        SELECT b.source_name,
+               count(*)                                  AS n,
+               max(r.watermark_before - b.event_ts)      AS worst
+        FROM bronze__raw_item b
+        JOIN ops__ingest_run_log r
+          ON b.run_id = r.run_id AND b.source_name = r.source_name
+        WHERE r.watermark_before IS NOT NULL
+          AND b.event_ts < r.watermark_before
+        GROUP BY 1 ORDER BY 1
+    """).fetchall()
+    if not late:
+        typer.echo("  (관측 없음 — 아직 데이터가 적거나 소급이 불필요하다는 뜻)")
+    for src, n, worst in late:
+        typer.echo(f"  {src:<20} {n}건  최대 지연={worst}")
+
     typer.echo(f"\n── 최근 실행 {limit}건 ──")
     for row in con.execute(
         """

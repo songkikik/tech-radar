@@ -32,7 +32,7 @@ _ATOM = "{http://www.w3.org/2005/Atom}"
 _UA = "tech-radar/0.1 (personal research project; +https://github.com/songkikik)"
 
 # --------------------------------------------------------------------------
-# TODO(나): 아래 두 값은 직접 근거를 세워서 정할 것.
+# 수집 커서의 두 조절 파라미터.
 #
 # SAFETY_LAG — 상한을 now 에서 얼마나 뒤로 물릴 것인가.
 #   arXiv 는 제출 시각과 API 인덱싱 시각 사이에 지연이 있다. 상한을 now 로 두면
@@ -44,11 +44,41 @@ _UA = "tech-radar/0.1 (personal research project; +https://github.com/songkikik)
 #   멱등키가 중복을 흡수하므로 넉넉히 잡아도 손해는 재조회 비용뿐이다.
 #   짧으면 유실, 길면 매일 같은 데이터를 다시 받는다.
 #
-# 판단 근거를 만드는 법: 아래 값으로 며칠 돌린 뒤
-#   SELECT native_id, min(fetched_at) - event_ts AS lag
-#   FROM bronze__raw_item WHERE source_name LIKE 'arxiv:%'
-#   ORDER BY lag DESC LIMIT 50;
-# 로 실제 인덱싱 지연 분포를 보고 p99 를 덮도록 조정한다.
+# 값을 정하는 근거 — 측정 방법을 두 번 갈아엎었으니 기록해둔다.
+#
+#   ✗ 틀린 방법: SELECT fetched_at - event_ts FROM bronze__raw_item
+#     이건 우편향 절단(right-censoring)이다. 아직 인덱싱되지 않은 논문은 애초에
+#     bronze 에 들어올 수 없으므로, 이 쿼리는 "인덱싱 지연"이 아니라 "우리가 얼마나
+#     늦게 크롤했나"를 잰다. 콜드스타트로 7일치를 한 번에 받으면 lag 이 7일로 나오는데
+#     그건 arXiv 탓이 아니라 우리 탓이다.
+#
+#   ○ 맞는 방법: 실행 시점의 커서보다 과거인데 그 실행에서 처음 들어온 행 =
+#     소급 조회가 실제로 건져낸 late arrival. run_log 에 watermark_before 를
+#     남겨둔 이유가 이것이다.
+#
+#       SELECT b.native_id,
+#              r.watermark_before - b.event_ts AS late_by
+#       FROM bronze__raw_item b
+#       JOIN ops__ingest_run_log r
+#         ON b.run_id = r.run_id AND b.source_name = r.source_name
+#       WHERE r.watermark_before IS NOT NULL
+#         AND b.event_ts < r.watermark_before
+#       ORDER BY late_by DESC;
+#
+#     late_by 의 p99 를 덮도록 OVERLAP 을 잡는다. 관측치가 0건이면 소급 조회가
+#     아무것도 못 건지고 있다는 뜻이므로 OVERLAP 을 줄여 요청을 아낀다.
+#
+# 잠정값의 근거 (관측 누적 전):
+#   OVERLAP=2일     arXiv 는 하루 1회 announcement 사이클을 돌고 모더레이션이 붙는다.
+#                   사이클 2회분을 덮는 최소치. 재조회 비용은 런당 HTTP 1회뿐이라
+#                   과하게 잡아도 손해가 작다 — 유실이 훨씬 비싸다.
+#   SAFETY_LAG=15분 전방/소급 분리 이후로는 중요도가 크게 떨어졌다. 소급 조회가
+#                   매 실행 OVERLAP 구간을 다시 훑으므로, 상한을 조금 앞서 잡아
+#                   놓쳐도 다음 실행이 회수한다. 이 값이 막는 건 "전방 구간을
+#                   소진해 커서를 upper 로 점프시킬 때" 아직 인덱싱 안 된 구간까지
+#                   건너뛰는 경우 하나뿐이다.
+#
+# TODO(나): 며칠 돌린 뒤 위 쿼리로 late_by 분포를 보고 두 값을 확정할 것.
 SAFETY_LAG = timedelta(minutes=15)
 OVERLAP = timedelta(days=2)
 # --------------------------------------------------------------------------
