@@ -3,9 +3,9 @@ version: 2
 models:
   - name: silver__document
     description: >
-      문서 1건 = 1행. bronze payload 를 정규화하고 published_at 을 1급 컬럼으로
-      승격해 recency 랭킹이 가능하게 만든다. grain = doc_id.
-      비즈니스 owner: 김기훈(개인 프로젝트).
+      문서 1건 = 1행. 소스별 staging(stg_arxiv__document, stg_hackernews__document)을
+      union 하고 published_at 을 1급 컬럼으로 승격해 recency 랭킹이 가능하게 만든다.
+      grain = doc_id. 비즈니스 owner: 김기훈(개인 프로젝트).
     columns:
       - name: doc_id
         description: "{source}:{native_id}. 전 파이프라인의 문서 식별자."
@@ -28,21 +28,58 @@ models:
         data_tests:
           - not_null
 
+      - name: url
+        description: >
+          문서 원문 링크. HN 텍스트 글은 url 이 비어 있어 staging 에서 항목
+          페이지로 폴백한다 — 다이제스트에 링크 없는 항목이 나가면 안 되므로.
+        data_tests:
+          - not_null
+
+      - name: body
+        description: 본문/초록. HN 링크 글은 NULL 일 수 있다(외부 기사라 본문이 없음).
+
       - name: published_at
         description: >
-          발행 시각(UTC). 랭킹의 recency 축. meta JSON 에서 꺼내 승격한 값이라
-          NULL 이면 그 문서는 최신성 점수를 받을 수 없다.
+          발행 시각(UTC). 랭킹의 recency 축. arXiv 는 ISO 문자열, HN 은 unix epoch 라
+          staging 에서 각각 파싱해 맞춘다.
         data_tests:
           - not_null
 
       - name: content_hash
         description: >
           임베딩 대상 텍스트(title + body)의 해시. payload_hash 와 다르다 —
-          점수 같은 부가 필드만 바뀐 경우 재임베딩을 피하기 위함.
+          HN 점수처럼 부가 필드만 바뀐 경우 재임베딩을 피하기 위함.
         data_tests:
           - not_null
 
       - name: _source_fetched_at
         description: 수집 시각. incremental 필터의 기준(이벤트 시각이 아님).
+        data_tests:
+          - not_null
+
+  - name: silver__document_metric_daily
+    description: >
+      문서의 참여 지표 일별 관측치. grain = doc_id × metric_date.
+      gold 의 engagement_velocity(일간 델타)가 이 테이블을 원재료로 쓴다.
+      현재 제공 소스는 HN 뿐(arXiv 는 인용수 API 없음, GitHub 은 Phase 8).
+      비즈니스 owner: 김기훈(개인 프로젝트).
+    columns:
+      - name: doc_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('silver__document')
+                field: doc_id
+      - name: metric_date
+        description: 관측 일자(수집 시각 기준). 이벤트 발생일이 아니다.
+        data_tests:
+          - not_null
+      - name: score
+        description: 그날 마지막 관측된 HN 점수. 최댓값이 아니라 최종값(플래깅으로 내려갈 수 있음).
+      - name: comments
+        description: 그날 마지막 관측된 댓글 수(descendants).
+      - name: observed_at
+        description: 그날 마지막 수집 시각. incremental 필터의 기준.
         data_tests:
           - not_null

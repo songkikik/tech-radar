@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import typer
 
 from techradar import lake
-from techradar.collect import arxiv
+from techradar.collect import arxiv, hackernews
 from techradar.config import load_target, new_run_id
 
 app = typer.Typer(add_completion=False, help="최신 기술 트렌드 증분 파이프라인")
@@ -32,8 +32,8 @@ def _open(target_name: str | None):
     return target, con
 
 
-@app.command("collect")
-def collect_cmd(
+@app.command("collect-arxiv")
+def collect_arxiv_cmd(
     category: str = typer.Option("cs.AI", "--category", help="arXiv 카테고리"),
     target: str = typer.Option(None, "--target", help="dev|ci|prod (기본: env)"),
     max_pages: int = typer.Option(10, "--max-pages", help="런당 페이지 상한"),
@@ -64,6 +64,27 @@ def collect_cmd(
         typer.echo("  ❌ 커서 정체 — 런 용량이 부족합니다. --max-pages 를 올리세요")
     elif not r["exhausted"]:
         typer.echo("  ⚠️  전방 구간 미소진 — 다음 실행이 이어서 처리합니다")
+
+
+@app.command("collect-hn")
+def collect_hn_cmd(
+    listing: str = typer.Option("top", "--listing", help="top|best|new"),
+    limit: int = typer.Option(200, "--limit", help="상위 몇 건까지"),
+    target: str = typer.Option(None, "--target"),
+    workers: int = typer.Option(16, "--workers", help="item 병렬 조회 수"),
+) -> None:
+    """Hacker News listing 을 전량 수집한다 (mutating 소스라 커서 없음)."""
+    tgt, con = _open(target)
+    run_id = new_run_id()
+    typer.echo(f"[{tgt.name}] run_id={run_id}")
+
+    r = hackernews.collect(
+        con, listing=listing, run_id=run_id, limit=limit, max_workers=workers
+    )
+    typer.echo(f"  listing     {r['source_name']}  (ID {r['ids_listed']}건 조회)")
+    typer.echo(f"  수신/신규   {r['rows_fetched']} / {r['rows_new']}")
+    if r["item_failures"]:
+        typer.echo(f"  ⚠️  item {r['item_failures']}건 조회 실패 (나머지는 정상 적재)")
 
 
 @app.command("status")
