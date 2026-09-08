@@ -28,6 +28,18 @@ sources:
           - name: fetched_at
             description: 수집 시각. silver incremental 필터가 쓰는 기준.
 
+      - name: ml__embedding
+        description: >
+          문서 임베딩. grain = doc_id × model_name × content_hash.
+          Python embed 잡이 append 하고 dbt 는 읽기만 한다.
+          model_name 이 grain 에 있어 여러 모델 임베딩이 공존할 수 있으므로
+          vec 은 고정 크기가 아닌 FLOAT[] 가변 리스트다.
+        columns:
+          - name: content_hash
+            description: silver__document.content_hash 와 일치해야 최신 임베딩으로 인정된다.
+          - name: vec
+            description: L2 정규화된 임베딩. 정규화했으므로 코사인 = 내적.
+
       - name: ops__source_watermark
         description: 소스별 수집 커서. Phase 6 의 정체 탐지가 읽는다.
       - name: ops__ingest_run_log

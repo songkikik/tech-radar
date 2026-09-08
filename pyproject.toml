@@ -21,6 +21,11 @@ dependencies = [
 techradar = "techradar.cli:app"
 
 [project.optional-dependencies]
+# 임베딩은 torch 를 끌고 와서 무겁다. 코어 파이프라인(수집·dbt)은 이것 없이 돌아야
+# 하므로 별도 그룹으로 분리한다. GH Actions 도 embed 잡에서만 설치한다.
+embed = [
+    "sentence-transformers>=3.0.0",
+]
 dev = [
     "pytest>=8.0.0",
 ]

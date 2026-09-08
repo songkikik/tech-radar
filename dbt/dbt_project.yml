@@ -13,6 +13,14 @@ vars:
   # at-least-once 로 재처리해도 merge 가 멱등이므로 넉넉히 잡는 편이 안전하다.
   silver_lookback_days: 2
 
+  # 임베딩 모델 이름. ml__embedding 의 grain 에 들어가므로, 이 값을 바꾸면
+  # 전량 삭제 없이 새 모델로 백필이 시작된다(옛 임베딩은 남아 롤백 가능).
+  embed_model: "Qwen/Qwen3-Embedding-0.6B"
+
+  # 런당 임베딩 상한. GH Actions 러너 타임아웃을 막는 안전판이고,
+  # 남은 백로그는 다음 실행이 집어간다.
+  embed_batch_cap: 2000
+
 models:
   techradar:
     +database: lake

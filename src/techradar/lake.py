@@ -24,6 +24,15 @@ from techradar.config import CATALOG, Target
 # bronze 는 원본 payload 를 파싱 없이 그대로 보존한다. 파서에 버그가 있어도
 # 재수집 없이 silver 만 다시 만들면 되도록.
 #
+# ml__embedding 의 grain 은 (doc_id, model_name, content_hash) 다. 셋 다 필요하다:
+#   content_hash  본문이 바뀌면 백로그에 자동 재등장한다. 무효화 로직이 따로 필요 없다.
+#   model_name    모델 교체가 '전량 삭제 후 재계산'이 아니라 '백필'이 된다.
+#                 두 모델 임베딩을 공존시켜 A/B 하고 리더 쪽만 바꿔 롤백할 수 있다.
+#
+# vec 을 FLOAT[1024] 고정 크기가 아니라 FLOAT[] 가변 리스트로 두는 이유가 여기 있다.
+# grain 에 model_name 이 있는데 컬럼이 고정 차원이면 차원이 다른 모델을 못 넣는다.
+# 코사인 유사도는 조회 시점에 ::FLOAT[dim] 으로 캐스팅해 계산한다.
+#
 # 멱등키 = (source_name, native_id, payload_hash).
 # payload_hash 를 키에 넣는 이유: HN 처럼 점수가 계속 변하는 소스는 같은 아이템이라도
 # 내용이 바뀌면 새 행이어야 이력이 남는다. 안 변했으면 재수집해도 행이 안 늘어난다.
@@ -48,6 +57,16 @@ _DDL = [
         last_success_at  TIMESTAMPTZ,
         consecutive_fail INTEGER NOT NULL DEFAULT 0,
         updated_at       TIMESTAMPTZ
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS ml__embedding (
+        doc_id       VARCHAR NOT NULL,
+        model_name   VARCHAR NOT NULL,
+        content_hash VARCHAR NOT NULL,
+        dim          INTEGER NOT NULL,
+        vec          FLOAT[] NOT NULL,
+        embedded_at  TIMESTAMPTZ NOT NULL
     )
     """,
     """

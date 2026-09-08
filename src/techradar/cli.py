@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 import typer
 
+from techradar import embed as embed_mod
 from techradar import lake
 from techradar.collect import arxiv, hackernews
 from techradar.config import load_target, new_run_id
@@ -85,6 +86,26 @@ def collect_hn_cmd(
     typer.echo(f"  수신/신규   {r['rows_fetched']} / {r['rows_new']}")
     if r["item_failures"]:
         typer.echo(f"  ⚠️  item {r['item_failures']}건 조회 실패 (나머지는 정상 적재)")
+
+
+@app.command("embed")
+def embed_cmd(
+    target: str = typer.Option(None, "--target"),
+    model: str = typer.Option(embed_mod.DEFAULT_MODEL, "--model"),
+    batch_size: int = typer.Option(32, "--batch-size"),
+    limit: int = typer.Option(None, "--limit", help="이번 실행에서 처리할 상한"),
+) -> None:
+    """백로그(미임베딩 문서)만 인코딩해 ml__embedding 에 append 한다."""
+    tgt, con = _open(target)
+    pending = embed_mod.backlog_size(con)
+    typer.echo(f"[{tgt.name}] 백로그 {pending}건, 모델={model}")
+    if pending == 0:
+        typer.echo("  처리할 문서 없음")
+        return
+
+    r = embed_mod.run_backlog(con, model_name=model, batch_size=batch_size, limit=limit)
+    typer.echo(f"  임베딩      {r['embedded']}건  dim={r['dim']}  {r['seconds']:.1f}s")
+    typer.echo(f"  잔여 백로그 {embed_mod.backlog_size(con)}건")
 
 
 @app.command("status")
