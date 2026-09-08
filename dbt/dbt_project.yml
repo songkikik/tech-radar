@@ -21,8 +21,27 @@ vars:
   # 남은 백로그는 다음 실행이 집어간다.
   embed_batch_cap: 2000
 
+  # 다이제스트에 들어갈 최소 관심도. 실측 분포(398건)에서 정했다:
+  #   전체 median 0.391 / p95 0.546 / max 0.782
+  #   0.45 통과 = arxiv 14% · hackernews 67%
+  # 소스별 쿼터(4건)보다 충분히 많으므로 평상시엔 쿼터가 선택을 하고,
+  # 이 값은 정말 건질 게 없는 날에만 작동한다.
+  digest_affinity_floor: 0.45
+
+  # engagement 보정이 최대(×2)가 되는 일일 점수 상승폭. 로그 스케일이라
+  # 2000 을 넘어도 완만하게만 오른다 — 인기가 관련성을 압도하면 안 되므로
+  # 세 신호 중 가장 약하게 설계했다.
+  engagement_full_scale: 2000
+
+seeds:
+  techradar:
+    +database: lake
+    +schema: main
+
 models:
   techradar:
     +database: lake
     silver:
       +materialized: incremental
+    gold:
+      +materialized: table

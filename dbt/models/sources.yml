@@ -40,6 +40,15 @@ sources:
           - name: vec
             description: L2 정규화된 임베딩. 정규화했으므로 코사인 = 내적.
 
+      - name: ml__interest_embedding
+        description: 관심 토픽 임베딩. 문서와 같은 모델이어야 비교가 의미를 가진다.
+      - name: ops__digest_delivery
+        description: >
+          다이제스트 실제 발송 결과. Python 이 쓴다.
+          dispatch 가 '이미 보낸 문서'를 제외할 때 이 테이블을 본다 —
+          '선정됨'이 아니라 '발송 성공'을 기준으로 삼아야 전송 실패한 문서가
+          다음날 다시 후보에 오른다.
+
       - name: ops__source_watermark
         description: 소스별 수집 커서. Phase 6 의 정체 탐지가 읽는다.
       - name: ops__ingest_run_log

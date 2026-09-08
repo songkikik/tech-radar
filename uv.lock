@@ -1378,6 +1378,7 @@ dependencies = [
     { name = "dbt-duckdb" },
     { name = "duckdb" },
     { name = "pytz" },
+    { name = "pyyaml" },
     { name = "typer" },
 ]
 
@@ -1395,6 +1396,7 @@ requires-dist = [
     { name = "duckdb", specifier = ">=1.4.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytz", specifier = ">=2024.1" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "sentence-transformers", marker = "extra == 'embed'", specifier = ">=3.0.0" },
     { name = "typer", specifier = ">=0.12.0" },
 ]

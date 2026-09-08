@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 import typer
 
 from techradar import embed as embed_mod
+from techradar import digest as digest_mod
+from techradar import interests as interests_mod
 from techradar import lake
 from techradar.collect import arxiv, hackernews
 from techradar.config import load_target, new_run_id
@@ -106,6 +108,50 @@ def embed_cmd(
     r = embed_mod.run_backlog(con, model_name=model, batch_size=batch_size, limit=limit)
     typer.echo(f"  임베딩      {r['embedded']}건  dim={r['dim']}  {r['seconds']:.1f}s")
     typer.echo(f"  잔여 백로그 {embed_mod.backlog_size(con)}건")
+
+
+@app.command("interests")
+def interests_cmd(
+    target: str = typer.Option(None, "--target"),
+    model: str = typer.Option(embed_mod.DEFAULT_MODEL, "--model"),
+    rebuild: bool = typer.Option(False, "--rebuild", help="해당 모델 임베딩 전체 재생성"),
+) -> None:
+    """profiles/interests.yml 을 임베딩해 테이블과 동기화한다."""
+    tgt, con = _open(target)
+    r = interests_mod.sync(con, model_name=model, rebuild=rebuild)
+    typer.echo(
+        f"[{tgt.name}] 토픽 {r['total']}개 · 신규/변경 {r['embedded']}개 · 삭제 {r['removed']}개"
+    )
+
+
+@app.command("digest")
+def digest_cmd(
+    target: str = typer.Option(None, "--target"),
+    send: bool = typer.Option(False, "--send", help="실제 발송 (없으면 미리보기만)"),
+    no_summary: bool = typer.Option(False, "--no-summary", help="Groq 요약 건너뛰기"),
+) -> None:
+    """오늘 선정된 항목을 요약해 Slack 으로 보낸다 (기본은 미리보기)."""
+    tgt, con = _open(target)
+    r = digest_mod.run(con, dry_run=not send, summarize=not no_summary)
+
+    if r["items"] == 0:
+        typer.echo(f"[{tgt.name}] 보낼 항목 없음 (오늘 선정분이 이미 발송됐거나 후보가 없음)")
+        return
+
+    typer.echo(f"[{tgt.name}] {r['items']}건 · 요약 {r['summarized']}건")
+    for w in r.get("warnings", []):
+        typer.echo(f"  ⚠️  {w}")
+
+    if r["dry_run"]:
+        typer.echo(f"  (미리보기 — 실제 발송하려면 --send. Slack webhook 설정됨: {r['notifier_enabled']})\n")
+        for it in r["payload"]:
+            typer.echo(f"  [{it['source']}] {it['title'][:66]}")
+            typer.echo(f"     {it['url']}")
+            body = (it.get("summary") or (it.get("body") or "")[:160]).replace("\n", "\n     ")
+            typer.echo(f"     {body}")
+            typer.echo(f"     관심도 {it['affinity']:.2f} · {it['best_interest_label']}\n")
+    else:
+        typer.echo("  ✅ 발송 완료" if r["sent"] else "  ❌ 발송 실패 — 다음 실행에서 재시도됩니다")
 
 
 @app.command("status")

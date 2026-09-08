@@ -70,6 +70,27 @@ _DDL = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS ml__interest_embedding (
+        interest_key VARCHAR NOT NULL,
+        label        VARCHAR NOT NULL,
+        model_name   VARCHAR NOT NULL,
+        text_hash    VARCHAR NOT NULL,
+        dim          INTEGER NOT NULL,
+        vec          FLOAT[] NOT NULL,
+        embedded_at  TIMESTAMPTZ NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS ops__digest_delivery (
+        dispatch_id  VARCHAR NOT NULL,
+        doc_id       VARCHAR NOT NULL,
+        digest_date  DATE    NOT NULL,
+        status       VARCHAR NOT NULL,
+        sent_at      TIMESTAMPTZ NOT NULL,
+        error_msg    VARCHAR
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS ops__ingest_run_log (
         run_id           VARCHAR NOT NULL,
         source_name      VARCHAR NOT NULL,

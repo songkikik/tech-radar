@@ -1,0 +1,51 @@
+# 관심 토픽 프로필. 각 항목이 임베딩되어 "이 문서가 나와 얼마나 관련 있나"의 질의가 된다.
+# 문서의 affinity = 모든 토픽과의 코사인 유사도 중 최댓값.
+#
+# 왜 max 인가: 평균을 쓰면 6개 토픽 중 하나에 완벽히 들어맞는 문서가
+# 나머지 5개와 무관하다는 이유로 밀린다. 관심사는 OR 조건이지 AND 가 아니다.
+#
+# 토픽을 바꾸면 문서 재임베딩 없이 관심사 임베딩만 다시 만들면 된다
+# (techradar interests --rebuild).
+
+interests:
+  - key: pipeline_orchestration
+    label: 데이터 파이프라인·오케스트레이션
+    text: >
+      data pipeline orchestration, workflow scheduling, incremental data loading,
+      idempotent ingestion, backfill strategies, Airflow Dagster Prefect,
+      change data capture, late-arriving data handling
+
+  - key: dbt_modeling
+    label: dbt·데이터 모델링
+    text: >
+      dbt analytics engineering, dimensional modeling, incremental models,
+      SQL transformation best practices, semantic layer, metrics layer,
+      slowly changing dimensions, data mart design
+
+  - key: data_quality
+    label: 데이터 품질·정합성
+    text: >
+      data quality testing, data validation, anomaly detection in data pipelines,
+      freshness monitoring, data contracts, schema evolution,
+      reconciliation between source and warehouse, observability for data
+
+  - key: lakehouse_engines
+    label: 레이크하우스·쿼리 엔진
+    text: >
+      lakehouse architecture, Apache Iceberg Delta Lake Hudi, DuckDB,
+      columnar storage Parquet, query engine optimization, vectorized execution,
+      object storage as a data warehouse, table format catalogs
+
+  - key: catalog_governance
+    label: 데이터 카탈로그·거버넌스
+    text: >
+      data catalog, metadata management, data lineage, data discovery,
+      data governance, column-level lineage, business glossary,
+      schema registry, data mesh ownership
+
+  - key: llm_for_data
+    label: 데이터 작업에서의 LLM 활용
+    text: >
+      text-to-SQL, natural language querying of databases, semantic search over
+      documents, embedding models for retrieval, RAG pipelines,
+      LLM agents for data analysis, vector database indexing
