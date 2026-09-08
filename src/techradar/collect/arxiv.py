@@ -86,6 +86,32 @@ OVERLAP = timedelta(days=2)
 #: 커서가 없는 최초 실행에서 얼마나 과거부터 볼 것인가.
 COLD_START_WINDOW = timedelta(days=7)
 
+#: 기본 수집 카테고리.
+#:
+#: 카테고리마다 source_name('arxiv:cs.DB')이 달라 **각자 독립된 커서**를 갖는다.
+#: 하나가 실패해도 나머지 커서는 영향받지 않고, 새 카테고리 추가는 워터마크
+#: 테이블에 행 하나가 느는 것으로 끝난다.
+#:
+#: 선정 기준:
+#:   cs.DB/cs.DC/cs.SE  관심 프로필의 레이크하우스·파이프라인 토픽에 후보를 공급.
+#:                      이걸 안 넣었더니 'dbt·데이터 모델링' 토픽 매칭이 398건 중
+#:                      1건뿐이었다 — 토픽 문구 문제가 아니라 코퍼스에 아예 없었던 것.
+#:   cs.RO/cs.CR        개인 관심(로보틱스·보안).
+#:   stat.ME            인과추론·실험설계 등 분석 방법론. stat.ML 이 아닌 이유는
+#:                      그쪽은 머신러닝이라 cs.AI 와 겹쳐 편중만 키우기 때문.
+#:
+#: cs.CL(LLM/NLP)은 일부러 뺐다. cs.AI 와 크게 겹치는데다 하루 200~300건(추정)이라,
+#: 이미 69%를 독식 중인 'LLM 활용' 토픽 편중을 더 심하게 만든다.
+DEFAULT_CATEGORIES = (
+    "cs.AI",
+    "cs.DB",
+    "cs.DC",
+    "cs.SE",
+    "cs.RO",
+    "cs.CR",
+    "stat.ME",
+)
+
 
 class ArxivAPIError(RuntimeError):
     pass

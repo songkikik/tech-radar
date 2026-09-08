@@ -37,7 +37,11 @@ def _open(target_name: str | None):
 
 @app.command("collect-arxiv")
 def collect_arxiv_cmd(
-    category: str = typer.Option("cs.AI", "--category", help="arXiv 카테고리"),
+    category: str = typer.Option(
+        ",".join(arxiv.DEFAULT_CATEGORIES),
+        "--category",
+        help="쉼표로 구분. 카테고리마다 독립된 커서를 갖는다",
+    ),
     target: str = typer.Option(None, "--target", help="dev|ci|prod (기본: env)"),
     max_pages: int = typer.Option(10, "--max-pages", help="런당 페이지 상한"),
     page_size: int = typer.Option(100, "--page-size"),
@@ -45,28 +49,48 @@ def collect_arxiv_cmd(
     """arXiv 를 증분 수집해 bronze 에 적재한다."""
     tgt, con = _open(target)
     run_id = new_run_id()
-    typer.echo(f"[{tgt.name}] run_id={run_id}")
+    categories = [c.strip() for c in category.split(",") if c.strip()]
+    typer.echo(f"[{tgt.name}] run_id={run_id} · 카테고리 {len(categories)}개")
 
-    r = arxiv.collect(
-        con,
-        category=category,
-        run_id=run_id,
-        page_size=page_size,
-        max_pages=max_pages,
-    )
-    lo, hi = r["forward_window"]
-    typer.echo(f"  전방 구간   {_utc(lo)} ~ {_utc(hi)} UTC   ({r['rows_forward']}건)")
-    if r["backfill_window"]:
-        blo, bhi = r["backfill_window"]
+    total_new = 0
+    failed: list[str] = []
+    for cat in categories:
+        typer.echo(f"\n── {cat} ──")
+        try:
+            r = arxiv.collect(
+                con,
+                category=cat,
+                run_id=run_id,
+                page_size=page_size,
+                max_pages=max_pages,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # 한 카테고리 실패가 나머지를 막지 않는다. 커서는 각자 독립이므로
+            # 실패한 것만 다음 실행에서 같은 구간을 다시 시도한다.
+            failed.append(cat)
+            typer.echo(f"  ❌ 실패: {type(exc).__name__}: {exc}")
+            continue
+
+        lo, hi = r["forward_window"]
+        typer.echo(f"  전방 구간   {_utc(lo)} ~ {_utc(hi)} UTC   ({r['rows_forward']}건)")
+        if r["backfill_window"]:
+            blo, bhi = r["backfill_window"]
+            typer.echo(
+                f"  소급 구간   {_utc(blo)} ~ {_utc(bhi)} UTC   ({r['rows_backfill']}건)"
+            )
+        typer.echo(f"  수신/신규   {r['rows_fetched']} / {r['rows_new']}")
         typer.echo(
-            f"  소급 구간   {_utc(blo)} ~ {_utc(bhi)} UTC   ({r['rows_backfill']}건)"
+            f"  커서        {_utc(r['cursor_before'])} → {_utc(r['cursor_after'])} UTC"
         )
-    typer.echo(f"  수신/신규   {r['rows_fetched']} / {r['rows_new']}")
-    typer.echo(f"  커서        {_utc(r['cursor_before'])} → {_utc(r['cursor_after'])} UTC")
-    if r["stalled"]:
-        typer.echo("  ❌ 커서 정체 — 런 용량이 부족합니다. --max-pages 를 올리세요")
-    elif not r["exhausted"]:
-        typer.echo("  ⚠️  전방 구간 미소진 — 다음 실행이 이어서 처리합니다")
+        if r["stalled"]:
+            typer.echo("  ❌ 커서 정체 — 런 용량이 부족합니다. --max-pages 를 올리세요")
+        elif not r["exhausted"]:
+            typer.echo("  ⚠️  전방 구간 미소진 — 다음 실행이 이어서 처리합니다")
+        total_new += r["rows_new"]
+
+    typer.echo(f"\n합계 신규 {total_new}건")
+    if failed:
+        typer.echo(f"⚠️  실패한 카테고리: {', '.join(failed)} (다음 실행에서 재시도)")
 
 
 @app.command("collect-hn")

@@ -9,11 +9,14 @@
 
 with latest as (
 
+    -- 파티션 키는 native_id 다(source_name 을 넣으면 안 된다). 지금은 top 리스팅
+    -- 하나만 수집해서 결과가 같지만, best/new 를 추가하면 같은 글이 두 리스팅에
+    -- 동시에 올라 doc_id 가 중복된다 — arXiv 교차 등재에서 실제로 터진 것과 같은 버그다.
     select *
     from {{ source('lake', 'bronze__raw_item') }}
     where source_name like 'hackernews:%'
     qualify row_number() over (
-        partition by source_name, native_id
+        partition by native_id
         order by fetched_at desc, event_ts desc
     ) = 1
 

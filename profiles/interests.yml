@@ -49,3 +49,32 @@ interests:
       text-to-SQL, natural language querying of databases, semantic search over
       documents, embedding models for retrieval, RAG pipelines,
       LLM agents for data analysis, vector database indexing
+
+  # ── 아래 3개는 데이터 엔지니어링 외 개인 관심 축이다 (2026-09-08 추가).
+  #    카테고리(cs.RO / cs.CR / stat.ME)를 수집해도 대응 토픽이 없으면
+  #    affinity 가 임계값 0.45 를 못 넘어 영원히 선정되지 않는다.
+  #    수집과 관심 프로필은 반드시 짝으로 움직여야 한다.
+
+  - key: robotics
+    label: 로보틱스
+    text: >
+      robot learning, robotic manipulation, motion planning and control,
+      humanoid and legged locomotion, imitation learning from demonstration,
+      vision-language-action models for robots, sim-to-real transfer,
+      SLAM and robot perception
+
+  - key: security_crypto
+    label: 보안·암호
+    text: >
+      software supply chain security, vulnerability discovery and exploitation,
+      applied cryptography, secure protocol design, privacy-preserving computation,
+      differential privacy, authentication and access control,
+      security of machine learning systems
+
+  - key: statistics_methodology
+    label: 통계 방법론·인과추론
+    text: >
+      causal inference, A/B testing and online experimentation,
+      experimental design, uplift modeling, statistical hypothesis testing,
+      observational study methodology, propensity score matching,
+      time series forecasting methodology
