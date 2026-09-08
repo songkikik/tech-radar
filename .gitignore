@@ -21,6 +21,8 @@ __pycache__/
 dbt/target/
 dbt/dbt_packages/
 dbt/logs/
+# dbt 를 레포 루트에서 실행하면 여기에도 생긴다
+logs/
 # dbt 익명 사용추적 UUID. 머신마다 다르고 공유할 이유가 없다.
 .user.yml
 
