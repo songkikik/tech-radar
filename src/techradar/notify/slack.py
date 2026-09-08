@@ -15,12 +15,42 @@ import json
 import logging
 import os
 import urllib.request
-from datetime import date
+from datetime import date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
 _SOURCE_LABEL = {"arxiv": "논문", "hackernews": "HN", "github": "GitHub"}
+
+#: 다이제스트를 읽는 사람이 한국에 있으므로 표시 시각은 KST 로 고정한다.
+#:
+#: 명시적으로 변환하지 않으면 DuckDB 가 돌려준 TIMESTAMPTZ 의 tzinfo 를 그대로
+#: 따라가는데, 그건 세션 타임존(= 시스템 타임존)에서 온다. 맥에서는 KST 라 맞아
+#: 보이지만 GitHub Actions 러너는 UTC 이므로 배포하면 9시간 밀린 시각이 찍힌다.
+#: 에러 없이 조용히 틀린다.
+_KST = ZoneInfo("Asia/Seoul")
+
+
+def _escape_mrkdwn(text: str) -> str:
+    """Slack mrkdwn 특수문자를 이스케이프한다.
+
+    Slack 은 &, <, > 를 HTML 엔티티로 받는다. 이스케이프하지 않으면 제목에 이런
+    문자가 든 항목에서 링크가 깨지는데, 에러가 아니라 그냥 이상하게 보이는 거라
+    알아채기 어렵다.
+
+    & 를 먼저 치환해야 한다. 나중에 하면 앞서 만든 &lt; 의 & 까지 다시 치환된다.
+    """
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _escape_link_label(text: str) -> str:
+    """<url|label> 의 label 용 이스케이프.
+
+    label 안의 | 는 Slack 이 구분자로 먹어서 링크가 잘린다. 제거하면 제목이
+    어색해지므로 전각 세로줄(U+FF5C)로 바꾼다 — 눈으로는 거의 같아 보인다.
+    """
+    return _escape_mrkdwn(text).replace("|", "｜")
 
 
 class SlackNotifier:
@@ -91,13 +121,16 @@ def build_blocks(
     for item in items:
         label = _SOURCE_LABEL.get(item["source"], item["source"])
         summary = item.get("summary") or _fallback_excerpt(item.get("body"))
+        # URL 은 이스케이프하지 않는다 — Slack 이 링크 대상으로 그대로 읽는다.
+        # 이스케이프 대상은 사람이 읽는 텍스트뿐이다.
+        title = _escape_link_label(item["title"])
         blocks.append({"type": "divider"})
         blocks.append(
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*<{item['url']}|{item['title']}>*\n{summary}",
+                    "text": f"*<{item['url']}|{title}>*\n{_escape_mrkdwn(summary)}",
                 },
             }
         )
@@ -108,12 +141,16 @@ def build_blocks(
                     {
                         "type": "mrkdwn",
                         "text": (
-                            f"`{label}` · {item['best_interest_label']} · "
+                            f"`{label}` · {_escape_mrkdwn(item['best_interest_label'])} · "
                             f"관심도 {item['affinity']:.2f} · "
-                            f"{item['published_at']:%m-%d %H:%M}"
+                            f"{_kst(item['published_at'])} KST"
                         ),
                     }
                 ],
             }
         )
     return blocks
+
+
+def _kst(ts: datetime) -> str:
+    return ts.astimezone(_KST).strftime("%m-%d %H:%M")

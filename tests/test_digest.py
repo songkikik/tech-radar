@@ -131,3 +131,46 @@ def test_blocks_use_excerpt_when_no_summary():
     )
     text = "".join(str(b) for b in blocks)
     assert "본문" in text and "…" in text, "요약 없을 때 원문 발췌가 안 들어갔다"
+
+
+def test_escapes_slack_special_chars():
+    """제목의 & < > 가 이스케이프되고, 링크 레이블의 | 는 구분자로 안 먹혀야 한다."""
+    from datetime import date
+
+    blocks = slack.build_blocks(
+        [{
+            "source": "hackernews",
+            "title": "Rust & Go: a <deep> dive | part 2",
+            "url": "https://x?a=1&b=2",
+            "body": "본문",
+            "best_interest_label": "관심사",
+            "affinity": 0.7,
+            "published_at": datetime.now(timezone.utc),
+            "summary": None,
+        }],
+        digest_date=date.today(),
+    )
+    link = blocks[2]["text"]["text"].split("\n")[0]
+
+    assert "&amp;" in link and "&lt;deep&gt;" in link
+    # <url|label> 이 정확히 한 번만 끊겨야 링크가 성립한다.
+    assert link.count("|") == 1, f"링크 레이블의 | 가 구분자로 먹힌다: {link}"
+    # URL 은 이스케이프 대상이 아니다 — Slack 이 링크 대상으로 그대로 읽는다.
+    assert "https://x?a=1&b=2" in link
+
+
+def test_displays_time_in_kst_regardless_of_source_tz():
+    """UTC 로 들어와도 KST 로 표시한다 (GH Actions 러너는 UTC 라 안 하면 9시간 밀린다)."""
+    from datetime import date
+
+    utc_noon = datetime(2026, 9, 8, 12, 0, tzinfo=timezone.utc)
+    blocks = slack.build_blocks(
+        [{
+            "source": "arxiv", "title": "제목", "url": "https://x", "body": "본문",
+            "best_interest_label": "관심사", "affinity": 0.6,
+            "published_at": utc_noon, "summary": None,
+        }],
+        digest_date=date.today(),
+    )
+    context = blocks[3]["elements"][0]["text"]
+    assert "09-08 21:00 KST" in context, f"KST 변환이 안 됐다: {context}"
