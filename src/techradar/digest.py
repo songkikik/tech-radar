@@ -79,19 +79,21 @@ def run(
         return {"items": 0, "sent": False, "summarized": 0, "dry_run": dry_run}
 
     summary_failures = 0
+    summary_skipped = 0
     summarized = 0
     if summarize:
-        items, summary_failures = summarize_mod.summarize_many(items)
-        summarized = len(items) - summary_failures
+        items, summary_failures, summary_skipped = summarize_mod.summarize_many(items)
+        summarized = len(items) - summary_failures - summary_skipped
     else:
         for it in items:
             it["summary"] = None
 
     # 요약이 하나도 안 붙었으면 사용자가 알아야 한다 (조용히 원문만 나가면
     # "왜 요약이 없지?" 를 며칠 뒤에 알게 된다).
+    # 경고는 '실패'에만 붙인다. 본문이 없어 생략한 건 정상 동작이므로 경고하지 않는다.
     warn = list(warnings or [])
-    if summarize and summary_failures == len(items):
-        warn.append("요약 생성 실패 — 원문 초록으로 대체했습니다.")
+    if summarize and summary_failures and summary_failures == len(items) - summary_skipped:
+        warn.append("요약 생성 실패 — 원문으로 대체했습니다.")
 
     digest_date: date = items[0]["digest_date"]
     notifier = SlackNotifier()
@@ -101,6 +103,7 @@ def run(
             "items": len(items),
             "sent": False,
             "summarized": summarized,
+            "skipped": summary_skipped,
             "dry_run": True,
             "payload": items,
             "warnings": warn,
@@ -118,6 +121,7 @@ def run(
         "items": len(items),
         "sent": ok,
         "summarized": summarized,
+        "skipped": summary_skipped,
         "dry_run": False,
         "warnings": warn,
     }

@@ -138,7 +138,10 @@ def digest_cmd(
         typer.echo(f"[{tgt.name}] 보낼 항목 없음 (오늘 선정분이 이미 발송됐거나 후보가 없음)")
         return
 
-    typer.echo(f"[{tgt.name}] {r['items']}건 · 요약 {r['summarized']}건")
+    typer.echo(
+        f"[{tgt.name}] {r['items']}건 · 요약 {r['summarized']}건"
+        + (f" · 본문없어 생략 {r['skipped']}건" if r.get("skipped") else "")
+    )
     for w in r.get("warnings", []):
         typer.echo(f"  ⚠️  {w}")
 
