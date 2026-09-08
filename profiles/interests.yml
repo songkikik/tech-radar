@@ -15,12 +15,11 @@ interests:
       idempotent ingestion, backfill strategies, Airflow Dagster Prefect,
       change data capture, late-arriving data handling
 
-  - key: dbt_modeling
-    label: dbt·데이터 모델링
-    text: >
-      dbt analytics engineering, dimensional modeling, incremental models,
-      SQL transformation best practices, semantic layer, metrics layer,
-      slowly changing dimensions, data mart design
+  # ── 'dbt·데이터 모델링' 토픽은 2026-09-08 제거했다.
+  #    885건 코퍼스에서 매칭이 1건뿐이었다. dbt/analytics engineering 은 학계
+  #    주제가 아니라 실무 도구 영역이라 arXiv 에 논문이 거의 없다 — 카테고리를
+  #    더 넣어도 안 풀리는 공백이다. GitHub 소스(Phase 8)나 기술 블로그 RSS 를
+  #    붙이면 후보가 생기므로 그때 되살릴 것.
 
   - key: data_quality
     label: 데이터 품질·정합성

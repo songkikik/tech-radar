@@ -1,0 +1,57 @@
+version: 2
+
+models:
+  - name: dq__check_result
+    description: >
+      데이터 품질 판정. grain = check_name × check_date × source_name. 멱등.
+      status 는 ok | warn | critical | insufficient_data 네 가지다.
+      insufficient_data 는 '기준선이 없어 판정할 수 없음' 이며, 조용히 ok 로
+      처리하지 않는다 — 검사를 안 하면서 검사한 척하는 게 가장 나쁜 상태다.
+      비즈니스 owner: 김기훈(개인 프로젝트).
+    columns:
+      - name: check_name
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - ingest_error
+                  - volume_zero
+                  - freshness
+                  - watermark_stall
+                  - volume_drop
+                  - topic_domination
+                  - duplicate_candidate
+      - name: status
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["ok", "warn", "critical", "insufficient_data"]
+      - name: source_name
+        description: 소스별 체크는 source_name, 전역 체크는 '(전체)'.
+        data_tests:
+          - not_null
+      - name: detail
+        description: 사람이 읽을 판정 근거. 알림 메시지에 그대로 실린다.
+        data_tests:
+          - not_null
+
+  - name: dq__alert_dispatch
+    description: >
+      실제로 통보한 DQ 경고. append-only 사실 기록(비멱등).
+      severity 별로 독립된 cooldown 을 적용해, warn 이 억제 중이어도
+      critical 은 막히지 않는다.
+      비즈니스 owner: 김기훈(개인 프로젝트).
+    columns:
+      - name: alert_id
+        data_tests:
+          - not_null
+      - name: severity
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["warn", "critical"]
+      - name: alerted_at
+        data_tests:
+          - not_null

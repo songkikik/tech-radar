@@ -33,6 +33,29 @@ vars:
   # 세 신호 중 가장 약하게 설계했다.
   engagement_full_scale: 2000
 
+  # ── DQ 임계값 ─────────────────────────────────────────────
+  # 볼륨 급감: 트레일링 중앙값 대비 이 비율 미만이면 warn.
+  # 평균이 아니라 중앙값을 쓰는 이유는 스파이크 하루가 기준선을 통째로 끌어올려
+  # 그 뒤 며칠을 전부 '급감'으로 만드는 걸 막기 위함이다.
+  dq_volume_drop_ratio: 0.4
+
+  # 중앙값을 신뢰하려면 관측이 이만큼은 있어야 한다. 미만이면 판정하지 않고
+  # insufficient_data 로 남긴다 — 조용히 '통과'로 처리하면 검사를 안 하면서
+  # 검사한 척하게 된다.
+  dq_volume_min_observations: 7
+
+  # 마지막 성공 수집 이후 경과 시간. 일 1회 수집이므로 26h 면 한 번 걸렀다는 뜻.
+  dq_freshness_warn_hours: 26
+  dq_freshness_critical_hours: 48
+
+  # 한 관심토픽이 이 비율을 넘겨 독식하면 관심프로필과 코퍼스가 어긋났다는 신호.
+  # 2026-09-08 에 'LLM 활용'이 69% 를 먹은 걸 눈으로 발견했는데, 그런 건
+  # 자동으로 잡혀야 한다.
+  dq_topic_domination_ratio: 0.40
+
+  # 같은 체크를 매일 반복 통보하지 않는다. 알림 피로가 쌓이면 진짜 경고를 놓친다.
+  dq_alert_cooldown_hours: 20
+
 seeds:
   techradar:
     +database: lake

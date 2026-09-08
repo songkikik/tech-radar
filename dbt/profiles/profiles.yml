@@ -22,7 +22,13 @@ techradar:
             data_path: "{{ env_var('TECHRADAR_DEV_DATA_PATH') }}"
       database: lake
       schema: main
-      threads: 4
+      # ⚠️ threads: 1 은 성능 타협이 아니라 필수다.
+      # threads: 4 로 전체 빌드(32노드)를 돌리면 DuckDB 프로세스가 SIGSEGV(exit 139)로
+      # 죽는다. 2/2 재현했고, threads 1 에서는 32/32 정상 통과한다.
+      # DuckLake 카탈로그가 단일 DuckDB 파일이라 여러 스레드의 동시 쓰기를
+      # 못 견디는 것으로 보인다(정확한 메커니즘은 확인 필요).
+      # 모델 2개만 병렬로 돌릴 때는 안 터져서, 노드 수가 늘어야 드러난다.
+      threads: 1
 
     ci: &remote
       type: duckdb
@@ -44,7 +50,13 @@ techradar:
             data_path: "{{ env_var('TECHRADAR_DATA_PATH') }}"
       database: lake
       schema: main
-      threads: 4
+      # ⚠️ threads: 1 은 성능 타협이 아니라 필수다.
+      # threads: 4 로 전체 빌드(32노드)를 돌리면 DuckDB 프로세스가 SIGSEGV(exit 139)로
+      # 죽는다. 2/2 재현했고, threads 1 에서는 32/32 정상 통과한다.
+      # DuckLake 카탈로그가 단일 DuckDB 파일이라 여러 스레드의 동시 쓰기를
+      # 못 견디는 것으로 보인다(정확한 메커니즘은 확인 필요).
+      # 모델 2개만 병렬로 돌릴 때는 안 터져서, 노드 수가 늘어야 드러난다.
+      threads: 1
 
     prod:
       <<: *remote
