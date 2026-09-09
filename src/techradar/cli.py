@@ -8,6 +8,7 @@ import typer
 
 from techradar import embed as embed_mod
 from techradar import digest as digest_mod
+from techradar import dq as dq_mod
 from techradar import interests as interests_mod
 from techradar import lake
 from techradar.collect import arxiv, hackernews
@@ -153,13 +154,35 @@ def digest_cmd(
     target: str = typer.Option(None, "--target"),
     send: bool = typer.Option(False, "--send", help="실제 발송 (없으면 미리보기만)"),
     no_summary: bool = typer.Option(False, "--no-summary", help="Groq 요약 건너뛰기"),
+    no_dq: bool = typer.Option(False, "--no-dq", help="DQ 경고 배너 생략"),
 ) -> None:
     """오늘 선정된 항목을 요약해 Slack 으로 보낸다 (기본은 미리보기)."""
     tgt, con = _open(target)
-    r = digest_mod.run(con, dry_run=not send, summarize=not no_summary)
+    # DQ 경고를 여기서 읽어 넘긴다. digest.run 이 직접 읽지 않는 이유는, 그러면
+    # 다이제스트가 dq 모델에 하드 의존하게 돼 dbt 를 안 돌린 상태에서 테스트가
+    # 불가능해지기 때문이다. 주입해 주면 테스트가 문자열 리스트만 넘기면 된다.
+    warnings = [] if no_dq else dq_mod.pending_warnings(con)
+    r = digest_mod.run(con, dry_run=not send, summarize=not no_summary, warnings=warnings)
 
     if r["items"] == 0:
         typer.echo(f"[{tgt.name}] 보낼 항목 없음 (오늘 선정분이 이미 발송됐거나 후보가 없음)")
+        for w in warnings:
+            typer.echo(f"  ⚠️  {w}")
+        # TODO(나): 항목 0건 + critical 경고가 있을 때 경고만이라도 Slack 으로 보낼 것인가?
+        #
+        # 지금은 아무것도 안 나간다. 그런데 "수집이 끊겨 후보가 0건" 인 날이야말로
+        # 경고가 가장 필요한 날이다 — Phase 6 의 완료 판정("소스를 끊고 급감 경고 수신")이
+        # 이 경로에서는 성립하지 않는다.
+        #
+        # 반대로 매일 보내면: 주말처럼 자연스럽게 0건인 날에도 알림이 가고,
+        # 그게 반복되면 배너를 안 보게 된다(알림 피로).
+        #
+        # 판단할 것 ─ 어떤 조건에서 보낼지:
+        #   (a) critical 이 하나라도 있으면 보낸다 (warn 은 무시)
+        #   (b) 0건이 N일 연속이면 보낸다
+        #   (c) 항상 보낸다
+        # 구현 위치는 여기, `notifier = SlackNotifier(); notifier.send(...)` 5~10줄.
+        # send_digest 는 항목 리스트를 전제하므로 그대로는 못 쓴다.
         return
 
     typer.echo(
