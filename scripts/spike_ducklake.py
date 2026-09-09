@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+import time
 import traceback
 from pathlib import Path
 
@@ -204,11 +205,91 @@ def s5_r2(con, _tmp):
     raise SkipCheck("TODO: R2 계정 발급 후 구현")
 
 
-def s6_neon(con, _tmp):
-    """S6: Neon Postgres 카탈로그 attach. DSN 이 없으면 스킵."""
-    if not os.environ.get("TECHRADAR_CATALOG_DSN"):
+def s6_neon(_con, tmp):
+    """S6: Neon Postgres 카탈로그 attach + 트랜잭션 보장 + 콜드스타트 측정.
+
+    ★ DATA_PATH 를 **로컬 디렉토리**로 둔다. R2 를 같이 붙이면 실패했을 때
+      카탈로그가 문제인지 오브젝트 스토리지가 문제인지 못 가린다. 변수를
+      하나씩만 바꾼다 — S5(R2)는 DATA_PATH 만 따로 검증한다.
+
+    확인할 것 세 가지:
+      1. `ducklake:postgres:` 로 붙는가 (postgres 확장 오토로드 포함)
+      2. **다중 테이블 단일 트랜잭션이 Postgres 카탈로그에서도 성립하는가**
+         — S2 를 로컬 DuckDB 카탈로그로만 통과시켰다. 카탈로그 구현이 바뀌면
+         전제도 다시 확인해야 한다. 이게 깨지면 설계를 바꿔야 한다.
+      3. Neon scale-to-zero 콜드스타트가 GH Actions 잡을 막을 만큼 긴가
+
+    쓰는 테이블은 `_spike_` 접두사뿐이고 끝나면 지운다.
+    """
+    dsn = os.environ.get("TECHRADAR_CATALOG_DSN")
+    if not dsn:
         raise SkipCheck("env 미설정: TECHRADAR_CATALOG_DSN")
-    raise SkipCheck("TODO: Neon 프로젝트 생성 후 구현")
+
+    if "-pooler." in dsn:
+        raise SkipCheck(
+            "pooled DSN 으로 보입니다(호스트에 '-pooler'). PgBouncer 트랜잭션 풀링은 "
+            "세션 상태를 보장하지 않아 이 파이프라인의 트랜잭션 전제와 충돌합니다. "
+            "Neon 대시보드에서 direct connection string 을 쓰세요."
+        )
+
+    data_path = tmp / "neon_lakehouse"
+    data_path.mkdir(parents=True, exist_ok=True)
+
+    con = duckdb.connect()
+    con.execute("INSTALL ducklake")
+    con.execute("LOAD ducklake")
+    # postgres 확장은 보통 오토로드되지만, 명시해야 실패 시 원인이 분명해진다.
+    con.execute("INSTALL postgres")
+    con.execute("LOAD postgres")
+
+    # scale-to-zero 상태면 첫 접속에서 인스턴스가 깨어난다. 그 시간을 잰다.
+    t0 = time.monotonic()
+    con.execute(
+        f"ATTACH 'ducklake:postgres:{dsn}' AS neon (DATA_PATH '{data_path}/')"
+    )
+    cold_ms = (time.monotonic() - t0) * 1000
+    con.execute("USE neon")
+
+    try:
+        con.execute("DROP TABLE IF EXISTS _spike_bronze")
+        con.execute("DROP TABLE IF EXISTS _spike_watermark")
+        con.execute("CREATE TABLE _spike_bronze (native_id VARCHAR)")
+        con.execute("CREATE TABLE _spike_watermark (source_name VARCHAR, cursor_ts TIMESTAMPTZ)")
+        con.execute("INSERT INTO _spike_watermark VALUES ('arxiv', '2020-01-01'::TIMESTAMPTZ)")
+
+        # (2) 커밋: 두 테이블 변경이 함께 보여야 한다.
+        con.execute("BEGIN TRANSACTION")
+        con.execute("INSERT INTO _spike_bronze VALUES ('a'), ('b')")
+        con.execute("UPDATE _spike_watermark SET cursor_ts = '2026-01-01'::TIMESTAMPTZ")
+        con.execute("COMMIT")
+        rows = con.execute("SELECT count(*) FROM _spike_bronze").fetchone()[0]
+        cur = con.execute("SELECT cursor_ts FROM _spike_watermark").fetchone()[0]
+        assert rows == 2, f"커밋 후 bronze 2행이어야 하는데 {rows}"
+        assert cur.year == 2026, f"커밋 후 커서가 전진해야 하는데 {cur}"
+
+        # (2') 롤백: 데이터도 커서도 함께 되돌아가야 한다. 한쪽만 남으면
+        #      "적재됐는데 커서는 안 움직임" 또는 그 반대가 되어 설계가 무너진다.
+        con.execute("BEGIN TRANSACTION")
+        con.execute("INSERT INTO _spike_bronze VALUES ('c')")
+        con.execute("UPDATE _spike_watermark SET cursor_ts = '2027-01-01'::TIMESTAMPTZ")
+        con.execute("ROLLBACK")
+        rows_after = con.execute("SELECT count(*) FROM _spike_bronze").fetchone()[0]
+        cur_after = con.execute("SELECT cursor_ts FROM _spike_watermark").fetchone()[0]
+        assert rows_after == 2, f"롤백 후에도 2행이어야 하는데 {rows_after}"
+        assert cur_after.year == 2026, f"롤백 후 커서가 원복돼야 하는데 {cur_after}"
+
+        # parquet 이 실제로 로컬에 떨어졌는지 (카탈로그만 원격, 데이터는 DATA_PATH)
+        parquet_files = list(data_path.rglob("*.parquet"))
+        assert parquet_files, "DATA_PATH 에 parquet 이 생성되지 않음"
+
+        return (
+            f"attach(콜드스타트 포함) {cold_ms:.0f}ms · "
+            f"커밋/롤백 모두 두 테이블 동시 반영 · parquet {len(parquet_files)}개"
+        )
+    finally:
+        con.execute("DROP TABLE IF EXISTS _spike_bronze")
+        con.execute("DROP TABLE IF EXISTS _spike_watermark")
+        con.close()
 
 
 class SkipCheck(Exception):
