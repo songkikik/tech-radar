@@ -17,6 +17,7 @@ import shutil
 import tempfile
 import time
 import traceback
+import uuid
 from pathlib import Path
 
 import duckdb
@@ -196,13 +197,98 @@ def s4_merge(con, _tmp):
     return f"upsert 성립 (갱신 1 + 신규 1) → merge 전략 사용 가능"
 
 
-def s5_r2(con, _tmp):
-    """S5: R2 왕복. 자격증명이 없으면 스킵."""
+def s5_r2(_con, tmp):
+    """S5: R2 를 DATA_PATH 로 쓰는 왕복 검증.
+
+    ★ 카탈로그는 **로컬 DuckDB** 로 둔다. S6 이 그 반대(Neon 카탈로그 + 로컬 데이터)
+      였다. 한 번에 변수 하나만 바꿔야 실패했을 때 어느 쪽이 문제인지 가릴 수 있다.
+
+    ★ 자격증명 설정은 techradar.lake._configure_r2 를 **그대로 import 해서** 쓴다.
+      스파이크가 따로 구현하면 정작 운영에서 도는 코드는 검증되지 않는다.
+      이 함수는 지금까지 한 번도 실행된 적이 없다.
+
+    쓰기는 prod 프리픽스를 건드리지 않도록 `_spike_<uuid>/` 아래에서만 한다.
+    끝나면 DuckLake 의 스냅샷 만료 + 파일 정리로 지운다 — Phase 7 컴팩션이
+    쓸 경로와 같아서, 그 메커니즘도 여기서 같이 확인된다.
+    """
     required = ("R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY")
     missing = [k for k in required if not os.environ.get(k)]
     if missing:
         raise SkipCheck(f"env 미설정: {', '.join(missing)}")
-    raise SkipCheck("TODO: R2 계정 발급 후 구현")
+
+    prod_path = os.environ.get("TECHRADAR_DATA_PATH")
+    if not prod_path or not prod_path.startswith("s3://"):
+        raise SkipCheck("TECHRADAR_DATA_PATH 가 s3://버킷/프리픽스/ 형태여야 합니다")
+
+    # s3://techradar/prod/ → s3://techradar/_spike_ab12cd34/
+    bucket = prod_path[len("s3://"):].split("/", 1)[0]
+    spike_path = f"s3://{bucket}/_spike_{uuid.uuid4().hex[:8]}/"
+
+    from techradar.lake import _configure_r2  # 운영 코드 그대로 검증
+
+    con = duckdb.connect()
+    con.execute("INSTALL ducklake")
+    con.execute("LOAD ducklake")
+    con.execute("INSTALL httpfs")
+    con.execute("LOAD httpfs")
+    _configure_r2(con)
+
+    catalog_file = tmp / "r2_catalog.ducklake"
+    t0 = time.monotonic()
+    con.execute(f"ATTACH 'ducklake:{catalog_file}' AS r2lake (DATA_PATH '{spike_path}')")
+    attach_ms = (time.monotonic() - t0) * 1000
+    con.execute("USE r2lake")
+
+    cleanup_note = ""
+    try:
+        con.execute("CREATE TABLE _spike_doc (doc_id VARCHAR, title VARCHAR)")
+        # 인라이닝 한도(기본 10행)를 넘겨야 parquet 이 실제로 R2 로 올라간다.
+        con.execute(
+            "INSERT INTO _spike_doc "
+            "SELECT 'doc' || i, 'title ' || i FROM range(50) t(i)"
+        )
+        con.execute("CALL ducklake_flush_inlined_data('r2lake')")
+
+        # 쓰기 확인: R2 에 실제 객체가 생겼는가
+        files = con.execute(
+            f"SELECT count(*) FROM glob('{spike_path}**/*.parquet')"
+        ).fetchone()[0]
+        assert files > 0, "R2 에 parquet 이 올라가지 않음"
+
+        # 읽기 확인: **새 커넥션**으로 다시 붙어 읽는다. 같은 커넥션이면
+        # 캐시된 상태를 읽고 통과할 수 있어 왕복 검증이 안 된다.
+        con2 = duckdb.connect()
+        con2.execute("INSTALL ducklake"); con2.execute("LOAD ducklake")
+        con2.execute("INSTALL httpfs"); con2.execute("LOAD httpfs")
+        _configure_r2(con2)
+        con2.execute(f"ATTACH 'ducklake:{catalog_file}' AS r2lake (DATA_PATH '{spike_path}')")
+        t1 = time.monotonic()
+        n = con2.execute("SELECT count(*) FROM r2lake._spike_doc").fetchone()[0]
+        read_ms = (time.monotonic() - t1) * 1000
+        con2.close()
+        assert n == 50, f"읽기 왕복 실패: 50행이어야 하는데 {n}"
+
+        return (
+            f"attach {attach_ms:.0f}ms · 쓰기 parquet {files}개 · "
+            f"읽기 왕복 {n}행 {read_ms:.0f}ms{cleanup_note}"
+        )
+    finally:
+        # DuckLake 가 R2 객체까지 지우게 한다 (Phase 7 컴팩션과 같은 경로).
+        # 실패해도 스파이크 판정을 뒤집지 않는다 — 남는 건 _spike_ 프리픽스의
+        # 작은 파일 몇 개뿐이고, 대시보드에서 지울 수 있다.
+        try:
+            con.execute("DROP TABLE IF EXISTS _spike_doc")
+            con.execute("CALL ducklake_expire_snapshots('r2lake', older_than => now())")
+            con.execute("CALL ducklake_cleanup_old_files('r2lake', cleanup_all => true)")
+            left = con.execute(
+                f"SELECT count(*) FROM glob('{spike_path}**/*.parquet')"
+            ).fetchone()[0]
+            if left:
+                print(f"[S5] ⚠️ R2 에 {left}개 파일이 남았습니다: {spike_path}")
+        except Exception as e:  # noqa: BLE001
+            print(f"[S5] ⚠️ R2 정리 실패({type(e).__name__}: {e}) — 남은 경로: {spike_path}")
+        finally:
+            con.close()
 
 
 def _pg_connect(dsn: str) -> duckdb.DuckDBPyConnection:
