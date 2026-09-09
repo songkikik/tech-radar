@@ -18,8 +18,8 @@ jobs:
       TECHRADAR_DEV_CATALOG: ${{ github.workspace }}/data/catalog.ducklake
       TECHRADAR_DEV_DATA_PATH: ${{ github.workspace }}/data/lakehouse/
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
         with:
           enable-cache: true
 
