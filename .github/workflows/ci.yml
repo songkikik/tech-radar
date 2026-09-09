@@ -19,7 +19,7 @@ jobs:
       TECHRADAR_DEV_DATA_PATH: ${{ github.workspace }}/data/lakehouse/
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
 
@@ -51,3 +51,8 @@ jobs:
 
       - name: dbt build (2회차 — incremental 분기)
         run: uv run dbt build --project-dir dbt
+
+# ⚠️ setup-uv 는 major 이동 태그(v10)를 만들지 않는다 — 정확한 버전을 핀해야 한다.
+#    checkout(v7)·cache(v6)는 이동 태그가 있어 그대로 쓴다.
+#    v10 으로 썼다가 "Unable to resolve action, unable to find version v10" 으로
+#    Set up job 단계에서 즉사했다.
