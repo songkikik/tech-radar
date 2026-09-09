@@ -205,6 +205,55 @@ def s5_r2(con, _tmp):
     raise SkipCheck("TODO: R2 계정 발급 후 구현")
 
 
+def _pg_connect(dsn: str) -> duckdb.DuckDBPyConnection:
+    """DuckLake 가 아니라 **일반 Postgres** 로 붙는다 (카탈로그 내부를 보려고)."""
+    con = duckdb.connect()
+    con.execute("INSTALL postgres")
+    con.execute("LOAD postgres")
+    con.execute(f"ATTACH '{dsn}' AS pg (TYPE postgres)")
+    return con
+
+
+def _ducklake_tables(dsn: str) -> list[str]:
+    con = _pg_connect(dsn)
+    try:
+        return [
+            r[0]
+            for r in con.execute(
+                "SELECT table_name FROM pg.information_schema.tables "
+                "WHERE table_schema='public' AND table_name LIKE 'ducklake%' ORDER BY 1"
+            ).fetchall()
+        ]
+    finally:
+        con.close()
+
+
+def _reset_catalog(dsn: str) -> int:
+    """카탈로그를 빈 DB 로 되돌린다.
+
+    스파이크가 흔적을 남기면 재실행이 깨진다 — DuckLake 는 DATA_PATH 를
+    카탈로그에 **영속 기록**하므로, 매번 새 임시 디렉토리를 쓰는 스파이크는
+    2회차 ATTACH 에서 "does not match existing data path" 로 거부당한다.
+    실제로 그렇게 한 번 막혔다.
+
+    ducklake_* 30여 개 테이블은 FK 로 서로 물려 있어 CASCADE 가 필요하다.
+    """
+    tables = _ducklake_tables(dsn)
+    if not tables:
+        return 0
+    con = _pg_connect(dsn)
+    try:
+        stmt = (
+            "DROP TABLE IF EXISTS "
+            + ", ".join(f'public."{t}"' for t in tables)
+            + " CASCADE"
+        )
+        con.execute(f"CALL postgres_execute('pg', $$ {stmt} $$)")
+        return len(tables)
+    finally:
+        con.close()
+
+
 def s6_neon(_con, tmp):
     """S6: Neon Postgres 카탈로그 attach + 트랜잭션 보장 + 콜드스타트 측정.
 
@@ -232,6 +281,19 @@ def s6_neon(_con, tmp):
             "Neon 대시보드에서 direct connection string 을 쓰세요."
         )
 
+    # ★ 안전 가드 — 이미 초기화된 카탈로그면 손대지 않는다.
+    #
+    # 이 스파이크는 끝나면 ducklake_* 테이블을 전부 DROP 해서 빈 DB 로 되돌린다.
+    # 그 대상이 실운영 카탈로그라면 **파이프라인 전체를 날리는 것**이다.
+    # prod 가 살아난 뒤에 무심코 스파이크를 돌리는 일이 반드시 생기므로,
+    # 비어있지 않으면 아예 실행하지 않는다.
+    existing = _ducklake_tables(dsn)
+    if existing:
+        raise SkipCheck(
+            f"카탈로그가 이미 초기화돼 있습니다(ducklake_* {len(existing)}개). "
+            f"실데이터일 수 있어 건너뜁니다 — 스파이크는 빈 DB 에서만 돕니다."
+        )
+
     data_path = tmp / "neon_lakehouse"
     data_path.mkdir(parents=True, exist_ok=True)
 
@@ -242,12 +304,14 @@ def s6_neon(_con, tmp):
     con.execute("INSTALL postgres")
     con.execute("LOAD postgres")
 
-    # scale-to-zero 상태면 첫 접속에서 인스턴스가 깨어난다. 그 시간을 잰다.
+    # ⚠️ 최초 attach 는 ducklake_* 30여 개 테이블을 만드는 **초기화**라, 평상시
+    #    비용이 아니다. 이걸 "콜드스타트"로 읽으면 판단을 그르친다 — 실제로
+    #    한 번 그렇게 잘못 보고했다. 두 수치를 따로 잰다.
     t0 = time.monotonic()
     con.execute(
         f"ATTACH 'ducklake:postgres:{dsn}' AS neon (DATA_PATH '{data_path}/')"
     )
-    cold_ms = (time.monotonic() - t0) * 1000
+    init_ms = (time.monotonic() - t0) * 1000
     con.execute("USE neon")
 
     try:
@@ -279,17 +343,46 @@ def s6_neon(_con, tmp):
         assert cur_after.year == 2026, f"롤백 후 커서가 원복돼야 하는데 {cur_after}"
 
         # parquet 이 실제로 로컬에 떨어졌는지 (카탈로그만 원격, 데이터는 DATA_PATH)
+        #
+        # ⚠️ flush 를 먼저 불러야 한다. DuckLake 는 소량 INSERT(기본 10행 한도)를
+        #    parquet 으로 쓰지 않고 **카탈로그 안에 인라이닝**한다. S1 에도 같은
+        #    주석이 있는데 여기서 빠뜨려 오탐이 났다.
+        #
+        #    카탈로그가 Neon 이면 이건 운영상 의미가 더 크다 — 인라이닝된 데이터가
+        #    무료 티어 0.5GB 를 갉아먹는다. Phase 7 주간 컴팩션에
+        #    flush_inlined_data 가 들어있는 이유가 이것이다.
+        inlined_before = len(list(data_path.rglob("*.parquet")))
+        con.execute("CALL ducklake_flush_inlined_data('neon')")
         parquet_files = list(data_path.rglob("*.parquet"))
-        assert parquet_files, "DATA_PATH 에 parquet 이 생성되지 않음"
+        assert parquet_files, "flush 후에도 DATA_PATH 에 parquet 이 생성되지 않음"
+
+        # 평상시 비용: 이미 초기화된 카탈로그에 새 커넥션으로 붙는 시간.
+        # GH Actions 는 잡마다 새로 붙으므로 이 값 × 잡 수가 고정 오버헤드다.
+        warm = duckdb.connect()
+        warm.execute("INSTALL ducklake"); warm.execute("LOAD ducklake")
+        warm.execute("INSTALL postgres"); warm.execute("LOAD postgres")
+        t1 = time.monotonic()
+        warm.execute(
+            f"ATTACH 'ducklake:postgres:{dsn}' AS neon (DATA_PATH '{data_path}/')"
+        )
+        warm_ms = (time.monotonic() - t1) * 1000
+        warm.close()
 
         return (
-            f"attach(콜드스타트 포함) {cold_ms:.0f}ms · "
-            f"커밋/롤백 모두 두 테이블 동시 반영 · parquet {len(parquet_files)}개"
+            f"attach 초기화 {init_ms:.0f}ms / 평상시 {warm_ms:.0f}ms "
+            f"(측정 위치의 RTT 에 지배됨 — GH Actions(미국)에서는 더 낮을 것으로 추정) · "
+            f"커밋/롤백 모두 두 테이블 동시 반영 · "
+            f"parquet {inlined_before}→{len(parquet_files)}개 (flush 전→후)"
         )
     finally:
-        con.execute("DROP TABLE IF EXISTS _spike_bronze")
-        con.execute("DROP TABLE IF EXISTS _spike_watermark")
-        con.close()
+        try:
+            con.execute("DROP TABLE IF EXISTS _spike_bronze")
+            con.execute("DROP TABLE IF EXISTS _spike_watermark")
+        finally:
+            # DETACH 후에 카탈로그 메타데이터까지 지워 빈 DB 로 되돌린다.
+            # 위 가드 덕분에 여기 도달했다는 건 '스파이크가 만든 것뿐'이라는 뜻이다.
+            con.close()
+            _reset_catalog(dsn)
 
 
 class SkipCheck(Exception):
