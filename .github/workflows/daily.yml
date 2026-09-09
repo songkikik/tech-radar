@@ -1,0 +1,134 @@
+name: daily
+
+# 21:00 UTC = 06:00 KST. 아침에 읽을 수 있게 그 전에 끝나야 한다.
+#
+# ⚠️ GitHub 의 스케줄 cron 은 정시 보장이 없다(혼잡 시간대에 수십 분 밀리고,
+#    드물게 아예 스킵된다). 파이프라인이 "매일 정확히 06:00"에 의존하면 안 되는
+#    이유이고, freshness DQ 체크의 경고 임계를 26시간으로 잡은 이유이기도 하다.
+on:
+  schedule:
+    - cron: "0 21 * * *"
+  workflow_dispatch:      # 손으로 돌려볼 수 있게
+
+# ⚠️ cancel-in-progress: false 가 중요하다.
+# 기본값(true)이면 새 실행이 진행 중인 실행을 죽이는데, 그러면 bronze INSERT 와
+# 워터마크 UPDATE 사이에서 프로세스가 끊길 수 있다. 트랜잭션이 롤백되므로
+# 데이터가 깨지지는 않지만, 매번 같은 구간을 재수집하며 영영 전진하지 못하게 된다.
+concurrency:
+  group: pipeline
+  cancel-in-progress: false
+
+env:
+  TECHRADAR_TARGET: prod
+  DBT_PROFILES_DIR: dbt/profiles
+  TECHRADAR_CATALOG_DSN: ${{ secrets.TECHRADAR_CATALOG_DSN }}
+  TECHRADAR_DATA_PATH: ${{ secrets.TECHRADAR_DATA_PATH }}
+  R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+  R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+  R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+
+jobs:
+
+  # ── 1. 수집 + silver ────────────────────────────────────────────────
+  # 잡을 셋으로 나눈 이유: 임베딩만 torch 를 끌고 온다(설치 수 분 + 모델 1.2GB).
+  # 상태가 러너 디스크가 아니라 Neon(카탈로그) + R2(parquet) 에 있으므로,
+  # 잡을 나눠도 이어서 작업할 수 있다. 이게 로컬 파일 기반이었다면 불가능하다.
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+
+      # 실패해도 다음 소스는 계속 가야 한다. 소스 하나가 죽었다고 전체가
+      # 멈추면, 나머지가 멀쩡한 날에도 다이제스트가 안 온다.
+      # 실패는 ops__ingest_run_log 에 남고 DQ 의 ingest_error 체크가 잡는다.
+      - name: collect arXiv
+        run: uv run techradar collect-arxiv
+        continue-on-error: true
+      - name: collect Hacker News
+        run: uv run techradar collect-hn
+        continue-on-error: true
+
+      # silver 의 unique/not_null 은 **블로킹**이다. 깨진 데이터로 다이제스트를
+      # 보내느니 안 보내는 게 낫다. freshness·볼륨 급감 같은 논블로킹 판정은
+      # dbt 테스트가 아니라 dq__check_result 의 행으로 표현된다.
+      - name: dbt seed + silver
+        run: |
+          uv run dbt seed --project-dir dbt
+          uv run dbt build --project-dir dbt --select silver
+
+  # ── 2. 임베딩 ───────────────────────────────────────────────────────
+  embed:
+    needs: collect
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --extra embed
+
+      # 모델 가중치(~1.2GB)를 매일 다시 받지 않는다. 키에 모델명을 넣어
+      # embed_model 을 바꾸면 캐시도 자연히 갈린다.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-Qwen3-Embedding-0.6B
+
+      # 관심 프로필은 파일이 바뀔 때만 실제 인코딩이 일어난다(내용 해시 비교).
+      # 매번 돌려도 싼 이유이고, 매번 돌려야 interests.yml 수정이 자동 반영된다.
+      - name: sync interest profile
+        run: uv run techradar interests
+
+      # 안티조인 백로그라 상태가 없다. 어제 실패했으면 오늘 그만큼 더 집어가고,
+      # 런당 상한(embed_batch_cap)에 걸리면 남은 건 내일 소진된다 — self-healing.
+      - name: embed backlog
+        run: uv run techradar embed
+
+  # ── 3. 랭킹 + DQ + 발송 ─────────────────────────────────────────────
+  serve:
+    needs: embed
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+
+      # gold 를 임베딩 **뒤에** 돌려야 오늘 수집분이 오늘 다이제스트에 들어간다.
+      # 앞에 두면 affinity 를 못 구해 하루씩 밀린다.
+      - name: dbt gold + dq
+        run: uv run dbt build --project-dir dbt --select gold dq
+
+      # 요약(Groq)이 실패해도 원문 초록으로 발송된다. 요약은 부가물이지
+      # 발송 조건이 아니다. 발송 결과는 ops__digest_delivery 에 남고,
+      # 실패한 항목은 다음날 후보로 되돌아온다.
+      - name: send digest
+        run: uv run techradar digest --send
+
+  # ── 4. 실패 통보 ────────────────────────────────────────────────────
+  # 조용히 실패하는 파이프라인이 가장 나쁘다. 며칠 뒤 "왜 다이제스트가 안 오지"
+  # 로 알게 되는 것과, 그날 아침에 아는 것의 차이다.
+  notify-failure:
+    needs: [collect, embed, serve]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Slack 실패 알림
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          curl -sS -X POST -H 'Content-Type: application/json' \
+            -d "{\"text\":\":rotating_light: tech-radar 파이프라인 실패 — <${RUN_URL}|실행 로그>\"}" \
+            "$SLACK_WEBHOOK_URL"
